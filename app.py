@@ -1,4 +1,5 @@
 import logging
+from typing import Callable
 
 import pandas as pd
 import streamlit as st
@@ -9,6 +10,7 @@ from database.db import (
     add_report,
     add_scan,
     add_target,
+    count_findings,
     init_db,
     list_findings_for_scan,
     list_scans,
@@ -25,17 +27,46 @@ from modules.web_checks import run_web_checks
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 
-def run_scan(target_row: dict, intensity: str) -> tuple[int, dict, list[dict]]:
+def run_scan(
+    target_row: dict, intensity: str, progress: Callable[[str], None] | None = None
+) -> tuple[int, dict, list[dict]]:
     target = target_row["target"]
+    if progress:
+        progress("Running reconnaissance checks")
     recon = run_reconnaissance(target=target)
+    if progress:
+        progress("Enumerating exposed ports and services")
     ports = run_port_scan(target=target, intensity=intensity)
+    if progress:
+        progress("Running web security checks")
     web_findings = run_web_checks(target=target)
+    if progress:
+        progress("Building vulnerability assessment and severity scores")
     findings = build_assessment(target=target, recon=recon, port_scan=ports, web_findings=web_findings)
     summary = {"recon": recon, "ports": ports}
     scan_id = add_scan(target_id=target_row["id"], status="completed", scan_intensity=intensity, summary=summary)
     for finding in findings:
         add_finding(scan_id, finding)
     return scan_id, summary, findings
+
+
+def render_live_overview(targets: list[dict], scans: list[dict]):
+    st.header("Live System Overview")
+    total_findings = count_findings()
+    latest_scan = scans[0]["created_at"] if scans else "No scans yet"
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Tracked Targets", len(targets))
+    col2.metric("Total Scans", len(scans))
+    col3.metric("Total Findings", total_findings)
+
+    if scans:
+        st.success(f"System active. Latest scan recorded at {latest_scan}.")
+    else:
+        st.info("System ready. Add an authorized target and run a scan to see live results.")
+
+    if st.button("Refresh Live View"):
+        st.rerun()
 
 
 def dashboard():
@@ -60,6 +91,9 @@ def dashboard():
                 st.sidebar.error(str(exc))
 
     targets = list_targets()
+    scans = list_scans()
+    render_live_overview(targets=targets, scans=scans)
+
     if targets:
         target_labels = {f"{row['id']} - {row['target']}": row for row in targets}
         remove_label = st.sidebar.selectbox("Remove target", options=[""] + list(target_labels.keys()))
@@ -80,8 +114,11 @@ def dashboard():
             if not auth_check:
                 st.warning("You must confirm authorization before scanning.")
             else:
-                with st.spinner("Running safe, non-destructive checks..."):
-                    scan_id, summary, findings = run_scan(target_labels[selected_label], intensity)
+                with st.status("Running safe, non-destructive checks...", expanded=True) as status:
+                    scan_id, summary, findings = run_scan(
+                        target_labels[selected_label], intensity, progress=status.write
+                    )
+                    status.update(label=f"Scan completed. Scan ID: {scan_id}", state="complete")
                 st.success(f"Scan completed. Scan ID: {scan_id}")
                 st.subheader("Summary")
                 st.json(summary)
@@ -100,9 +137,8 @@ def dashboard():
                         st.success(f"Report generated: {path}")
                 else:
                     st.info("No findings detected by automated checks.")
-
     st.header("Scan History")
-    scans = list_scans()
+    st.header("Scan History")
     if scans:
         history_df = pd.DataFrame(
             [

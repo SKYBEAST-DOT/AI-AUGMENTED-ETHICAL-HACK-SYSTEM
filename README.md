@@ -74,6 +74,12 @@ Run the dashboard:
 streamlit run app.py
 ```
 
+Then open the live web page in your browser:
+
+```text
+http://localhost:8501
+```
+
 From the UI:
 1. Add a target.
 2. Confirm authorization explicitly before scanning.
