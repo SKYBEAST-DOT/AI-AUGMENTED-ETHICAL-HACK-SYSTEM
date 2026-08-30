@@ -160,6 +160,11 @@ def list_findings_for_scan(scan_id: int):
         return [dict(row) for row in rows]
 
 
+def count_findings() -> int:
+    with get_connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+
+
 def add_report(scan_id: int, path: str):
     with get_connection() as conn:
         conn.execute(
